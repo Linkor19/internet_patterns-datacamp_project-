@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import sqlalchemy as sql
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 2000)
@@ -284,7 +285,7 @@ corr_speed_coeff = corr_speed_coeff.corr(min_periods=3)
 #regresion analysis
 
 reggression_table = patterns_melted_df[['Country Name', 'year', 'value']].copy()
-reggression_table = reggression_table[reggression_table['Country Name'].isin(['Zimbabwe', 'Zambia'])]
+reggression_table = reggression_table[reggression_table['Country Name'].isin(['Cambodia','Chad','Congo, Dem. Rep.','Congo, Rep.'])]
 reggression_table = reggression_table.dropna()
 reggression_table['year'] = reggression_table['year'].astype(int)
 reggression_table['1/x'] = 1 / reggression_table['year']
@@ -311,10 +312,13 @@ def create_unique_dataframes(row):
 reggression_table.apply(create_unique_dataframes, axis=1)
 
 for name in list_of_dataframes:
-    current_df = globals()[name]
+    current_df = globals()[name].copy()
+
+    current_df = current_df[current_df['value'] > 0.10].copy().reset_index(drop=True)
 
     if len(current_df) < 2:
         continue
+
     slope_1, intercept_1, _, _, _ = stats.linregress(current_df['year'], current_df['value'])
     slope_2, intercept_2, _, _, _ = stats.linregress(current_df['ln(X)'], current_df['value'])
     slope_3, intercept_3, _, _, _ = stats.linregress(current_df['1/x'], current_df['value'])
@@ -328,11 +332,7 @@ for name in list_of_dataframes:
     model_sq = {i: [] for i in range(1, 10)}
 
     for idx, row in current_df.iterrows():
-        x = row['year']
-        y = row['value']
-        ln_x = row['ln(X)']
-        inv_x = row['1/x']
-
+        x, y, ln_x, inv_x = row['year'], row['value'], row['ln(X)'], row['1/x']
         model_sq[1].append((y - (intercept_1 + slope_1 * x)) ** 2)
         model_sq[2].append((y - (intercept_2 + slope_2 * ln_x)) ** 2)
         model_sq[3].append((y - (intercept_3 + slope_3 * inv_x)) ** 2)
@@ -343,16 +343,8 @@ for name in list_of_dataframes:
         model_sq[8].append((y - (1 / (intercept_8 + slope_8 * ln_x))) ** 2)
         model_sq[9].append((y - (1 / (intercept_9 + slope_9 * inv_x))) ** 2)
 
-    errors = [sum(model_sq[i]) for i in range(1, 10)]
-
-    best_error = min(errors)
-    best_model_idx = errors.index(best_error) + 1
-
-    globals()[f'best_model_{name}'] = errors
-    globals()[f'best_model_value_{name}'] = best_error
-    globals()[f'best_model_type_{name}'] = best_model_idx
-
-    predictions = []
+    errors_dict = {i: sum(model_sq[i]) for i in range(1, 10)}
+    best_model_idx = min(errors_dict, key=errors_dict.get)
 
     if best_model_idx == 1:
         predictions = intercept_1 + slope_1 * current_df['year']
@@ -373,6 +365,45 @@ for name in list_of_dataframes:
     elif best_model_idx == 9:
         predictions = 1 / (intercept_9 + slope_9 * current_df['1/x'])
 
-    reggression_table.loc[current_df.index, 'predicted_value'] = predictions
+    current_df['predicted_value'] = predictions
+    current_df['predicted_value'] = current_df['predicted_value'].clip(upper=100)
+
+    future_years = np.array([2024, 2025, 2026])
+    f_ln_x = np.log(future_years)
+    f_inv_x = 1 / future_years
+
+    if best_model_idx == 1:
+        f_preds = intercept_1 + slope_1 * future_years
+    elif best_model_idx == 2:
+        f_preds = intercept_2 + slope_2 * f_ln_x
+    elif best_model_idx == 3:
+        f_preds = intercept_3 + slope_3 * f_inv_x
+    elif best_model_idx == 4:
+        f_preds = np.exp(intercept_4 + slope_4 * future_years)
+    elif best_model_idx == 5:
+        f_preds = np.exp(intercept_5 + slope_5 * f_ln_x)
+    elif best_model_idx == 6:
+        f_preds = np.exp(intercept_6 + slope_6 * f_inv_x)
+    elif best_model_idx == 7:
+        f_preds = 1 / (intercept_7 + slope_7 * future_years)
+    elif best_model_idx == 8:
+        f_preds = 1 / (intercept_8 + slope_8 * f_ln_x)
+    elif best_model_idx == 9:
+        f_preds = 1 / (intercept_9 + slope_9 * f_inv_x)
+
+    country_name = current_df['Country Name'].iloc[0]
+    future_df = pd.DataFrame({
+        'Country Name': [country_name] * 3,
+        'year': future_years,
+        'predicted_value': f_preds,
+        'value': [np.nan] * 3
+    })
+    future_df['predicted_value'] = future_df['predicted_value'].clip(upper=100)
+
+    reggression_table = pd.concat([reggression_table, current_df, future_df], ignore_index=True)
 
 print(reggression_table)
+plt.close('all')
+sns.lineplot(data=reggression_table, x='year', y='value', hue='Country Name', marker='o', linestyle='--')
+sns.lineplot(data=reggression_table, x='year', y='predicted_value', hue='Country Name', legend=False)
+plt.show()
